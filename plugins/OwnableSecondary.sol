@@ -49,7 +49,7 @@ contract OwnableSecondary is Ownable {
    * @param recipient The address of new primary.
    */
   function transferPrimary(address recipient) public onlyOwner {
-    require(recipient != address(0), "not the primary user nor the owner");
+    require(recipient != address(0), "new primary address is null");
     _primary = recipient;
     emit PrimaryTransferred(_primary);
   }

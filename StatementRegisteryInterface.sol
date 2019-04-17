@@ -8,8 +8,6 @@ contract StatementRegisteryInterface is OwnableSecondary {
   /********************/
   function recordStatement(string calldata buildingPermitId, uint[] calldata statementDataLayout, bytes calldata statementData) external returns(bytes32);
 
-  function destroyAndSend(address payable recipient) external;
-
   /*******************/
   /** PUBLIC - READ **/
   /*******************/

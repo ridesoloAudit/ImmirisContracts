@@ -6,7 +6,8 @@ import "./plugins/OwnableSecondary.sol";
 
 contract StatementRegistery is StatementRegisteryInterface {
   ImmutableEternalStorageInterface public dataStore;
-  bytes32[] public statementIds;
+  string[] public buildingPermitIds;
+  mapping(bytes32 => uint) public statementCountByBuildingPermitHash;
 
   event NewStatementEvent(string indexed buildingPermitId, bytes32 statementId);
 
@@ -14,31 +15,28 @@ contract StatementRegistery is StatementRegisteryInterface {
   /** PUBLIC - WRITE **/
   /********************/
   constructor(address immutableDataStore) public {
+    require(immutableDataStore != address(0), "null data store");
     dataStore = ImmutableEternalStorageInterface(immutableDataStore);
   }
 
+  /* Only to be called by the Controller contract */
   function recordStatement(
     string calldata buildingPermitId,
     uint[] calldata statementDataLayout,
     bytes calldata statementData
   ) external onlyPrimaryOrOwner returns(bytes32) {
-    bytes32 statementId = generateStatementId(buildingPermitId);
+    bytes32 statementId = generateNewStatementId(buildingPermitId);
 
     assert(!statementExists(statementId));
 
-    pushStatementId(statementId);
-
     recordStatementKeyValues(statementId, statementDataLayout, statementData);
+
     dataStore.createBool(keccak256(abi.encodePacked(statementId)), true);
+    updateStatementCountByBuildingPermit(buildingPermitId);
 
     emit NewStatementEvent(buildingPermitId, statementId);
 
     return statementId;
-  }
-
-  function destroyAndSend(address payable recipient) external onlyOwner {
-    require(dataStore.primary() != address(this), "trying to destroy the registery while it is still referenced as primary by the dataStore");
-    selfdestruct(recipient);
   }
 
   /*******************/
@@ -51,7 +49,7 @@ contract StatementRegistery is StatementRegisteryInterface {
 
     while(nbStatements > 0) {
       nbStatements--;
-      res[nbStatements] = keccak256(abi.encodePacked(buildingPermitId,nbStatements));
+      res[nbStatements] = computeStatementId(buildingPermitId,nbStatements);
     }
 
     return res;
@@ -110,14 +108,39 @@ contract StatementRegistery is StatementRegisteryInterface {
   }
 
   function getAllStatements() external view returns(bytes32[] memory) {
-    return statementIds;
+    uint nbStatements = 0;
+    for(uint idx = 0; idx < buildingPermitIds.length; idx++) {
+      nbStatements += statementCountByBuildingPermit(buildingPermitIds[idx]);
+    }
+
+    bytes32[] memory res = new bytes32[](nbStatements);
+
+    uint statementIdx = 0;
+    for(uint idx = 0; idx < buildingPermitIds.length; idx++) {
+      nbStatements = statementCountByBuildingPermit(buildingPermitIds[idx]);
+      while(nbStatements > 0){
+        nbStatements--;
+        res[statementIdx] = computeStatementId(buildingPermitIds[idx],nbStatements);
+        statementIdx++;
+      }
+    }
+
+    return res;
   }
 
   /**********************/
   /** INTERNAL - WRITE **/
   /**********************/
-  function pushStatementId(bytes32 statementId) internal {
-    statementIds.push(statementId);
+  function updateStatementCountByBuildingPermit(string memory buildingPermitId) internal {
+    uint oldCount = statementCountByBuildingPermitHash[keccak256(abi.encodePacked(buildingPermitId))];
+
+    if(oldCount == 0) { // first record for this building permit id
+      buildingPermitIds.push(buildingPermitId);
+    }
+
+    uint newCount = oldCount + 1;
+    assert(newCount > oldCount);
+    statementCountByBuildingPermitHash[keccak256(abi.encodePacked(buildingPermitId))] = newCount;
   }
 
   function recordStatementKeyValues(
@@ -160,19 +183,20 @@ contract StatementRegistery is StatementRegisteryInterface {
     dataStore.createString(keccak256(abi.encodePacked(statementId,key)), value);
   }
 
-  function statementCountByBuildingPermit(string memory buildingPermitId) internal view returns (uint) {
-    uint nbStatements = 0;
-    while(statementExists(keccak256(abi.encodePacked(buildingPermitId,nbStatements)))) {nbStatements++;}
-
-    return nbStatements;
-  }
-
   /*********************/
   /** INTERNAL - READ **/
   /*********************/
-  function generateStatementId(string memory buildingPermitId) internal view returns (bytes32) {
+  function generateNewStatementId(string memory buildingPermitId) internal view returns (bytes32) {
     uint nbStatements = statementCountByBuildingPermit(buildingPermitId);
-    return keccak256(abi.encodePacked(buildingPermitId,nbStatements));
+    return computeStatementId(buildingPermitId,nbStatements);
+  }
+
+  function statementCountByBuildingPermit(string memory buildingPermitId) internal view returns (uint) {
+    return statementCountByBuildingPermitHash[keccak256(abi.encodePacked(buildingPermitId))]; // mapping's default is 0
+  }
+
+  function computeStatementId(string memory buildingPermitId, uint statementNb) internal pure returns (bytes32) {
+    return keccak256(abi.encodePacked(buildingPermitId,statementNb));
   }
 
   function parseStatementStrings(uint[] memory statementDataLayout, bytes memory statementData) internal pure returns(string[] memory) {
